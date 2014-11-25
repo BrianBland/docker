@@ -1,10 +1,12 @@
 package registry
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"net/url"
 	"strconv"
 
@@ -57,7 +59,7 @@ func getV2URL(e *Endpoint, routeName string, vars map[string]string) (*url.URL, 
 	if err != nil {
 		return nil, fmt.Errorf("unable to make registry route %q with vars %v: %s", routeName, vars, err)
 	}
-	u, err := url.Parse(REGISTRYSERVER)
+	u, err := url.Parse(REGISTRYSERVERV2)
 	if err != nil {
 		return nil, fmt.Errorf("invalid registry url: %s", err)
 	}
@@ -85,7 +87,7 @@ func (r *Session) GetV2Version(token []string) (*RegistryInfo, error) {
 		return nil, err
 	}
 	setTokenAuth(req, token)
-	res, _, err := r.doRequest(req)
+	res, _, err := r.doV2Request(req)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +133,7 @@ func (r *Session) GetV2ImageManifest(imageName, tagName string, token []string) 
 		return nil, err
 	}
 	setTokenAuth(req, token)
-	res, _, err := r.doRequest(req)
+	res, _, err := r.doV2Request(req)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +177,7 @@ func (r *Session) PostV2ImageMountBlob(imageName, sumType, sum string, token []s
 		return false, err
 	}
 	setTokenAuth(req, token)
-	res, _, err := r.doRequest(req)
+	res, _, err := r.doV2Request(req)
 	if err != nil {
 		return false, err
 	}
@@ -210,7 +212,7 @@ func (r *Session) GetV2ImageBlob(imageName, sumType, sum string, blobWrtr io.Wri
 		return err
 	}
 	setTokenAuth(req, token)
-	res, _, err := r.doRequest(req)
+	res, _, err := r.doV2Request(req)
 	if err != nil {
 		return err
 	}
@@ -245,7 +247,7 @@ func (r *Session) GetV2ImageBlobReader(imageName, sumType, sum string, token []s
 		return nil, 0, err
 	}
 	setTokenAuth(req, token)
-	res, _, err := r.doRequest(req)
+	res, _, err := r.doV2Request(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -285,7 +287,7 @@ func (r *Session) PutV2ImageBlob(imageName, sumType string, blobRdr io.Reader, t
 		return "", err
 	}
 	setTokenAuth(req, token)
-	res, _, err := r.doRequest(req)
+	res, _, err := r.doV2Request(req)
 	if err != nil {
 		return "", err
 	}
@@ -332,7 +334,7 @@ func (r *Session) PutV2ImageManifest(imageName, tagName string, manifestRdr io.R
 		return err
 	}
 	setTokenAuth(req, token)
-	res, _, err := r.doRequest(req)
+	res, _, err := r.doV2Request(req)
 	if err != nil {
 		return err
 	}
@@ -366,7 +368,7 @@ func (r *Session) GetV2RemoteTags(imageName string, token []string) ([]string, e
 		return nil, err
 	}
 	setTokenAuth(req, token)
-	res, _, err := r.doRequest(req)
+	res, _, err := r.doV2Request(req)
 	if err != nil {
 		return nil, err
 	}
@@ -387,4 +389,33 @@ func (r *Session) GetV2RemoteTags(imageName string, token []string) ([]string, e
 		return nil, fmt.Errorf("Error while decoding the http response: %s", err)
 	}
 	return tags, nil
+}
+
+func (r *Session) doV2Request(req *http.Request) (*http.Response, *http.Client, error) {
+	buffer := new(bytes.Buffer)
+	reqBody := req.Body
+	defer reqBody.Close()
+
+	teeReader := io.TeeReader(reqBody, buffer)
+	req.Body = ioutil.NopCloser(teeReader)
+	res, client, err := r.doRequest(req)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if res.StatusCode == http.StatusUnauthorized {
+		challenges := parseAuthHeader(res.Header)
+		token, err := getAuthToken(client, r.authConfig.Username, r.authConfig.Password, challenges)
+		if err != nil {
+			return nil, nil, err
+		}
+		authReq, err := http.NewRequest(req.Method, req.URL.String(), ioutil.NopCloser(io.MultiReader(buffer, reqBody)))
+		if err != nil {
+			return nil, nil, err
+		}
+		authReq.Header = req.Header
+		authReq.Header.Add("Authorization", "Token "+token)
+		res, err = client.Do(authReq)
+	}
+	return res, client, err
 }

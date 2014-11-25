@@ -20,8 +20,9 @@ const (
 	CONFIGFILE = ".dockercfg"
 
 	// Only used for user auth + account creation
-	INDEXSERVER    = "https://index.docker.io/v1/"
-	REGISTRYSERVER = "https://registry-1.docker.io/v1/"
+	INDEXSERVER      = "https://index.docker.io/v1/"
+	REGISTRYSERVERV1 = "https://registry-1.docker.io/v1/"
+	REGISTRYSERVERV2 = "https://registry-1.docker.io/v2/"
 
 	// INDEXSERVER = "https://registry-stage.hub.docker.com/v1/"
 )
@@ -31,12 +32,52 @@ var (
 	IndexServerURL       *url.URL
 )
 
+// Octet types from RFC 2616.
+var octetTypes [256]octetType
+
+type octetType byte
+
+const (
+	isToken octetType = 1 << iota
+	isSpace
+)
+
 func init() {
 	url, err := url.Parse(INDEXSERVER)
 	if err != nil {
 		panic(err)
 	}
 	IndexServerURL = url
+
+	// OCTET      = <any 8-bit sequence of data>
+	// CHAR       = <any US-ASCII character (octets 0 - 127)>
+	// CTL        = <any US-ASCII control character (octets 0 - 31) and DEL (127)>
+	// CR         = <US-ASCII CR, carriage return (13)>
+	// LF         = <US-ASCII LF, linefeed (10)>
+	// SP         = <US-ASCII SP, space (32)>
+	// HT         = <US-ASCII HT, horizontal-tab (9)>
+	// <">        = <US-ASCII double-quote mark (34)>
+	// CRLF       = CR LF
+	// LWS        = [CRLF] 1*( SP | HT )
+	// TEXT       = <any OCTET except CTLs, but including LWS>
+	// separators = "(" | ")" | "<" | ">" | "@" | "," | ";" | ":" | "\" | <">
+	//              | "/" | "[" | "]" | "?" | "=" | "{" | "}" | SP | HT
+	// token      = 1*<any CHAR except CTLs or separators>
+	// qdtext     = <any TEXT except <">>
+
+	for c := 0; c < 256; c++ {
+		var t octetType
+		isCtl := c <= 31 || c == 127
+		isChar := 0 <= c && c <= 127
+		isSeparator := strings.IndexRune(" \t\"(),/:;<=>?@[]\\{}", rune(c)) >= 0
+		if strings.IndexRune(" \t\r\n", rune(c)) >= 0 {
+			t |= isSpace
+		}
+		if isChar && !isCtl && !isSeparator {
+			t |= isToken
+		}
+		octetTypes[c] = t
+	}
 }
 
 type AuthConfig struct {
@@ -181,10 +222,10 @@ func Login(authConfig *AuthConfig, factory *utils.HTTPRequestFactory) (string, e
 	)
 
 	if serverAddress == "" {
-		serverAddress = IndexServerAddress()
+		serverAddress = REGISTRYSERVERV2
 	}
 
-	loginAgainstOfficialIndex := serverAddress == IndexServerAddress()
+	loginAgainstOfficialIndex := serverAddress == REGISTRYSERVERV2
 
 	// to avoid sending the server address to the server it should be removed before being marshalled
 	authCopy := *authConfig
@@ -194,6 +235,45 @@ func Login(authConfig *AuthConfig, factory *utils.HTTPRequestFactory) (string, e
 	if err != nil {
 		return "", fmt.Errorf("Config Error: %s", err)
 	}
+
+	req, err := factory.NewRequest("GET", serverAddress, nil)
+	if err != nil {
+		return "", fmt.Errorf("Server Error: %s", err)
+	}
+	req.SetBasicAuth(authConfig.Username, authConfig.Password)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("Server Error: %s", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		// v1 endpoint, fall through to old workflow below
+	case http.StatusOK:
+		// v2 authorized
+		return "Login Succeeded", nil
+	case http.StatusUnauthorized:
+		// v2 unauthorized
+		challenges := parseAuthHeader(resp.Header)
+		token, err := getAuthToken(client, authConfig.Username, authConfig.Password, challenges)
+		if err != nil {
+			return "", err
+		}
+		if token == "" {
+			return "", fmt.Errorf("Failed to receive auth token from authentication service")
+		}
+		return "Login Succeeded", nil
+	default:
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("Login: %s (Code: %d; Headers: %s)", body,
+			resp.StatusCode, resp.Header)
+	}
+
+	// TODO(bbland): remove loginAgainstOfficialIndex stuff here
 
 	// using `bytes.NewReader(jsonBody)` here causes the server to respond with a 411 status.
 	b := strings.NewReader(string(jsonBody))
@@ -306,4 +386,154 @@ func (config *ConfigFile) ResolveAuthConfig(hostname string) AuthConfig {
 
 	// When all else fails, return an empty auth config
 	return AuthConfig{}
+}
+
+type challenge struct {
+	Scheme     string
+	Parameters map[string]string
+}
+
+func getAuthToken(client *http.Client, username, password string, challenges []challenge) (string, error) {
+	for _, challenge := range challenges {
+		if challenge.Scheme == "token" {
+			realm, ok := challenge.Parameters["realm"]
+			if !ok {
+				continue
+			}
+			service := challenge.Parameters["service"]
+			scope := challenge.Parameters["scope"]
+
+			req, err := http.NewRequest("GET", realm+"token/", nil)
+			if err != nil {
+				return "", fmt.Errorf("Server Error: %s", err)
+			}
+			reqParams := req.URL.Query()
+			if service != "" {
+				reqParams.Add("service", service)
+			}
+			if scope != "" {
+				reqParams.Add("scope", scope)
+			}
+			reqParams.Add("account", username)
+			req.URL = &url.URL{
+				Scheme:   req.URL.Scheme,
+				Opaque:   req.URL.Opaque,
+				User:     req.URL.User,
+				Host:     req.URL.Host,
+				Path:     req.URL.Path,
+				RawQuery: reqParams.Encode(),
+			}
+			req.SetBasicAuth(username, password)
+			resp, err := client.Do(req)
+			if err != nil {
+				return "", fmt.Errorf("Server Error: %s", err)
+			}
+			defer resp.Body.Close()
+
+			switch resp.StatusCode {
+			case http.StatusOK, http.StatusNoContent:
+				token := resp.Header.Get("X-Auth-Token")
+				if token != "" {
+					return token, nil
+
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("Wrong login/password, please try again")
+}
+
+func parseAuthHeader(header http.Header) []challenge {
+	var challenges []challenge
+	for _, h := range header[http.CanonicalHeaderKey("WWW-Authenticate")] {
+		v, p := parseValueAndParams(h)
+		if v != "" {
+			challenges = append(challenges, challenge{Scheme: v, Parameters: p})
+		}
+	}
+	return challenges
+}
+
+func parseValueAndParams(header string) (value string, params map[string]string) {
+	params = make(map[string]string)
+	value, s := expectToken(header)
+	if value == "" {
+		return
+	}
+	value = strings.ToLower(value)
+	s = "," + skipSpace(s)
+	for strings.HasPrefix(s, ",") {
+		var pkey string
+		pkey, s = expectToken(skipSpace(s[1:]))
+		if pkey == "" {
+			return
+		}
+		if !strings.HasPrefix(s, "=") {
+			return
+		}
+		var pvalue string
+		pvalue, s = expectTokenOrQuoted(s[1:])
+		if pvalue == "" {
+			return
+		}
+		pkey = strings.ToLower(pkey)
+		params[pkey] = pvalue
+		s = skipSpace(s)
+	}
+	return
+}
+
+func skipSpace(s string) (rest string) {
+	i := 0
+	for ; i < len(s); i++ {
+		if octetTypes[s[i]]&isSpace == 0 {
+			break
+		}
+	}
+	return s[i:]
+}
+
+func expectToken(s string) (token, rest string) {
+	i := 0
+	for ; i < len(s); i++ {
+		if octetTypes[s[i]]&isToken == 0 {
+			break
+		}
+	}
+	return s[:i], s[i:]
+}
+
+func expectTokenOrQuoted(s string) (value string, rest string) {
+	if !strings.HasPrefix(s, "\"") {
+		return expectToken(s)
+	}
+	s = s[1:]
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '"':
+			return s[:i], s[i+1:]
+		case '\\':
+			p := make([]byte, len(s)-1)
+			j := copy(p, s[:i])
+			escape := true
+			for i = i + i; i < len(s); i++ {
+				b := s[i]
+				switch {
+				case escape:
+					escape = false
+					p[j] = b
+					j += 1
+				case b == '\\':
+					escape = true
+				case b == '"':
+					return string(p[:j]), s[i+1:]
+				default:
+					p[j] = b
+					j += 1
+				}
+			}
+			return "", ""
+		}
+	}
+	return "", ""
 }
