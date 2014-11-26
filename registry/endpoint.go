@@ -105,7 +105,7 @@ func (e Endpoint) VersionString(version APIVersion) string {
 }
 
 func (e Endpoint) Ping() (RegistryInfo, error) {
-	if e.String() == IndexServerAddress() {
+	if e.String() == OfficialRegistryAddress() {
 		// Skip the check, we now this one is valid
 		// (and we never want to fallback to http in case of error)
 		return RegistryInfo{Standalone: false}, nil
@@ -165,7 +165,7 @@ func (e Endpoint) Ping() (RegistryInfo, error) {
 //
 // hostname should be a URL.Host (`host:port` or `host`)
 func isSecure(hostname string, insecureRegistries []string) (bool, error) {
-	if hostname == IndexServerURL.Host {
+	if hostname == RegistryServerURL.Host {
 		return true, nil
 	}
 

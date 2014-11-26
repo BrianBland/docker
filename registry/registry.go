@@ -198,7 +198,7 @@ func ResolveRepositoryName(reposName string) (string, string, error) {
 		nameParts[0] != "localhost") {
 		// This is a Docker Index repos (ex: samalba/hipache or ubuntu)
 		err := validateRepositoryName(reposName)
-		return IndexServerAddress(), reposName, err
+		return OfficialRegistryAddress(), reposName, err
 	}
 	hostname := nameParts[0]
 	reposName = nameParts[1]

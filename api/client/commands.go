@@ -247,7 +247,7 @@ func (cli *DockerCli) CmdBuild(args ...string) error {
 
 // 'docker login': login / register a user to registry service.
 func (cli *DockerCli) CmdLogin(args ...string) error {
-	cmd := cli.Subcmd("login", "[SERVER]", "Register or log in to a Docker registry server, if no server is specified \""+registry.IndexServerAddress()+"\" is the default.")
+	cmd := cli.Subcmd("login", "[SERVER]", "Register or log in to a Docker registry server, if no server is specified \""+registry.OfficialRegistryAddress()+"\" is the default.")
 
 	var username, password, email string
 
@@ -258,7 +258,7 @@ func (cli *DockerCli) CmdLogin(args ...string) error {
 	if err != nil {
 		return nil
 	}
-	serverAddress := registry.IndexServerAddress()
+	serverAddress := registry.OfficialRegistryAddress()
 	if len(cmd.Args()) > 0 {
 		serverAddress = cmd.Arg(0)
 	}
@@ -363,12 +363,12 @@ func (cli *DockerCli) CmdLogin(args ...string) error {
 
 // log out from a Docker registry
 func (cli *DockerCli) CmdLogout(args ...string) error {
-	cmd := cli.Subcmd("logout", "[SERVER]", "Log out from a Docker registry, if no server is specified \""+registry.IndexServerAddress()+"\" is the default.")
+	cmd := cli.Subcmd("logout", "[SERVER]", "Log out from a Docker registry, if no server is specified \""+registry.OfficialRegistryAddress()+"\" is the default.")
 
 	if err := cmd.Parse(args); err != nil {
 		return nil
 	}
-	serverAddress := registry.IndexServerAddress()
+	serverAddress := registry.OfficialRegistryAddress()
 	if len(cmd.Args()) > 0 {
 		serverAddress = cmd.Arg(0)
 	}
@@ -1224,7 +1224,7 @@ func (cli *DockerCli) CmdPush(args ...string) error {
 	// Custom repositories can have different rules, and we must also
 	// allow pushing by image ID.
 	if len(strings.SplitN(name, "/", 2)) == 1 {
-		username := cli.configFile.Configs[registry.IndexServerAddress()].Username
+		username := cli.configFile.Configs[registry.OfficialRegistryAddress()].Username
 		if username == "" {
 			username = "<user>"
 		}

@@ -162,7 +162,7 @@ func TestResolveRepositoryName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, ep, IndexServerAddress(), "Expected endpoint to be index server address")
+	assertEqual(t, ep, OfficialRegistryAddress(), "Expected endpoint to be index server address")
 	assertEqual(t, repo, "fooo/bar", "Expected resolved repo to be foo/bar")
 
 	u := makeURL("")[7:]
@@ -177,7 +177,7 @@ func TestResolveRepositoryName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, ep, IndexServerAddress(), "Expected endpoint to be "+IndexServerAddress())
+	assertEqual(t, ep, OfficialRegistryAddress(), "Expected endpoint to be "+OfficialRegistryAddress())
 	assertEqual(t, repo, "ubuntu-12.04-base", "Expected endpoint to be ubuntu-12.04-base")
 }
 
@@ -326,7 +326,7 @@ func TestIsSecure(t *testing.T) {
 		insecureRegistries []string
 		expected           bool
 	}{
-		{IndexServerURL.Host, nil, true},
+		{RegistryServerURL.Host, nil, true},
 		{"example.com", []string{}, true},
 		{"example.com", []string{"example.com"}, false},
 		{"localhost", []string{"localhost:5000"}, false},

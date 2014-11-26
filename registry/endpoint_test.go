@@ -7,7 +7,7 @@ func TestEndpointParse(t *testing.T) {
 		str      string
 		expected string
 	}{
-		{IndexServerAddress(), IndexServerAddress()},
+		{OfficialRegistryAddress(), OfficialRegistryAddress()},
 		{"http://0.0.0.0:5000", "http://0.0.0.0:5000/v1/"},
 		{"0.0.0.0:5000", "https://0.0.0.0:5000/v1/"},
 	}

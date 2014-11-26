@@ -19,17 +19,14 @@ const (
 	// Where we store the config file
 	CONFIGFILE = ".dockercfg"
 
-	// Only used for user auth + account creation
-	INDEXSERVER      = "https://index.docker.io/v1/"
-	REGISTRYSERVERV1 = "https://registry-1.docker.io/v1/"
-	REGISTRYSERVERV2 = "https://registry-1.docker.io/v2/"
+	REGISTRYSERVER = "https://registry-1.docker.io/v2/"
 
 	// INDEXSERVER = "https://registry-stage.hub.docker.com/v1/"
 )
 
 var (
 	ErrConfigFileMissing = errors.New("The Auth config file is missing")
-	IndexServerURL       *url.URL
+	RegistryServerURL    *url.URL
 )
 
 // Octet types from RFC 2616.
@@ -43,11 +40,11 @@ const (
 )
 
 func init() {
-	url, err := url.Parse(INDEXSERVER)
+	url, err := url.Parse(REGISTRYSERVER)
 	if err != nil {
 		panic(err)
 	}
-	IndexServerURL = url
+	RegistryServerURL = url
 
 	// OCTET      = <any 8-bit sequence of data>
 	// CHAR       = <any US-ASCII character (octets 0 - 127)>
@@ -93,8 +90,8 @@ type ConfigFile struct {
 	rootPath string
 }
 
-func IndexServerAddress() string {
-	return INDEXSERVER
+func OfficialRegistryAddress() string {
+	return REGISTRYSERVER
 }
 
 // create a base64 encoded auth string to store in config
@@ -158,8 +155,8 @@ func LoadConfig(rootPath string) (*ConfigFile, error) {
 			return &configFile, fmt.Errorf("Invalid Auth config file")
 		}
 		authConfig.Email = origEmail[1]
-		authConfig.ServerAddress = IndexServerAddress()
-		configFile.Configs[IndexServerAddress()] = authConfig
+		authConfig.ServerAddress = OfficialRegistryAddress()
+		configFile.Configs[OfficialRegistryAddress()] = authConfig
 	} else {
 		for k, authConfig := range configFile.Configs {
 			authConfig.Username, authConfig.Password, err = decodeAuth(authConfig.Auth)
@@ -222,10 +219,8 @@ func Login(authConfig *AuthConfig, factory *utils.HTTPRequestFactory) (string, e
 	)
 
 	if serverAddress == "" {
-		serverAddress = REGISTRYSERVERV2
+		serverAddress = REGISTRYSERVER
 	}
-
-	loginAgainstOfficialIndex := serverAddress == REGISTRYSERVERV2
 
 	// to avoid sending the server address to the server it should be removed before being marshalled
 	authCopy := *authConfig
@@ -273,8 +268,6 @@ func Login(authConfig *AuthConfig, factory *utils.HTTPRequestFactory) (string, e
 			resp.StatusCode, resp.Header)
 	}
 
-	// TODO(bbland): remove loginAgainstOfficialIndex stuff here
-
 	// using `bytes.NewReader(jsonBody)` here causes the server to respond with a 411 status.
 	b := strings.NewReader(string(jsonBody))
 	req1, err := http.Post(serverAddress+"users/", "application/json; charset=utf-8", b)
@@ -289,12 +282,7 @@ func Login(authConfig *AuthConfig, factory *utils.HTTPRequestFactory) (string, e
 	}
 
 	if reqStatusCode == 201 {
-		if loginAgainstOfficialIndex {
-			status = "Account created. Please use the confirmation link we sent" +
-				" to your e-mail to activate it."
-		} else {
-			status = "Account created. Please see the documentation of the registry " + serverAddress + " for instructions how to activate it."
-		}
+		status = "Account created. Please see the documentation of the registry " + serverAddress + " for instructions how to activate it."
 	} else if reqStatusCode == 400 {
 		if string(reqBody) == "\"Username or email already exists\"" {
 			req, err := factory.NewRequest("GET", serverAddress+"users/", nil)
@@ -313,9 +301,6 @@ func Login(authConfig *AuthConfig, factory *utils.HTTPRequestFactory) (string, e
 			} else if resp.StatusCode == 401 {
 				return "", fmt.Errorf("Wrong login/password, please try again")
 			} else if resp.StatusCode == 403 {
-				if loginAgainstOfficialIndex {
-					return "", fmt.Errorf("Login: Account is not Active. Please check your e-mail for a confirmation link.")
-				}
 				return "", fmt.Errorf("Login: Account is not Active. Please see the documentation of the registry %s for instructions how to activate it.", serverAddress)
 			}
 			return "", fmt.Errorf("Login: %s (Code: %d; Headers: %s)", body, resp.StatusCode, resp.Header)
@@ -352,9 +337,9 @@ func Login(authConfig *AuthConfig, factory *utils.HTTPRequestFactory) (string, e
 
 // this method matches a auth configuration to a server address or a url
 func (config *ConfigFile) ResolveAuthConfig(hostname string) AuthConfig {
-	if hostname == IndexServerAddress() || len(hostname) == 0 {
+	if hostname == OfficialRegistryAddress() || len(hostname) == 0 {
 		// default to the index server
-		return config.Configs[IndexServerAddress()]
+		return config.Configs[OfficialRegistryAddress()]
 	}
 
 	// First try the happy case

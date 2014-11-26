@@ -124,7 +124,7 @@ func (s *TagStore) CmdPull(job *engine.Job) engine.Status {
 	}
 
 	var isOfficial bool
-	if endpoint.VersionString(1) == registry.IndexServerAddress() {
+	if endpoint.VersionString(1) == registry.OfficialRegistryAddress() {
 		// If pull "index.docker.io/foo/bar", it's stored locally under "foo/bar"
 		localName = remoteName
 
