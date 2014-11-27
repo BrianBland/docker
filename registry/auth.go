@@ -385,10 +385,20 @@ func getAuthToken(client *http.Client, username, password string, challenges []c
 			if !ok {
 				continue
 			}
+			realmURL, err := url.Parse(realm)
+			if err != nil {
+				// malformed realm url...
+				continue
+			}
+			if realmURL.Scheme == "" {
+				realmURL.Scheme = "https"
+			}
+			realmURL.Path += "token/"
+
 			service := challenge.Parameters["service"]
 			scope := challenge.Parameters["scope"]
 
-			req, err := http.NewRequest("GET", realm+"token/", nil)
+			req, err := http.NewRequest("GET", realmURL.String(), nil)
 			if err != nil {
 				return "", fmt.Errorf("Server Error: %s", err)
 			}
@@ -396,18 +406,12 @@ func getAuthToken(client *http.Client, username, password string, challenges []c
 			if service != "" {
 				reqParams.Add("service", service)
 			}
-			if scope != "" {
-				reqParams.Add("scope", scope)
+			for _, scopeField := range strings.Fields(scope) {
+				reqParams.Add("scope", scopeField)
 			}
+
 			reqParams.Add("account", username)
-			req.URL = &url.URL{
-				Scheme:   req.URL.Scheme,
-				Opaque:   req.URL.Opaque,
-				User:     req.URL.User,
-				Host:     req.URL.Host,
-				Path:     req.URL.Path,
-				RawQuery: reqParams.Encode(),
-			}
+			req.URL.RawQuery = reqParams.Encode()
 			req.SetBasicAuth(username, password)
 			resp, err := client.Do(req)
 			if err != nil {
@@ -420,7 +424,6 @@ func getAuthToken(client *http.Client, username, password string, challenges []c
 				token := resp.Header.Get("X-Auth-Token")
 				if token != "" {
 					return token, nil
-
 				}
 			}
 		}
