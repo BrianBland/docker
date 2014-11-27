@@ -39,7 +39,7 @@ func (s *Service) Auth(job *engine.Job) engine.Status {
 
 	job.GetenvJson("authConfig", authConfig)
 
-	if addr := authConfig.ServerAddress; addr != "" && addr != IndexServerAddress() {
+	if addr := authConfig.ServerAddress; addr != "" && addr != OfficialRegistryAddress() {
 		endpoint, err := NewEndpoint(addr, s.insecureRegistries)
 		if err != nil {
 			return job.Error(err)
